@@ -1,0 +1,1469 @@
+name: ComputeAorta/ci-github-nightlyexport
+on:
+  push:
+  workflow_dispatch:
+concurrency:
+  group: "${{ github.ref }}"
+  cancel-in-progress: true
+env:
+  STORAGE_USER: "${{ secrets.STORAGE_USER }}"
+  STORAGE_PASS: "${{ secrets.STORAGE_PASS }}"
+  ZULIP_TOKEN: "${{ secrets.ZULIP_TOKEN }}"
+  ComputeAortaCL_TOKEN: "${{ secrets.ComputeAortaCL_TOKEN }}"
+  ComputeAortaCLVK_TOKEN: "${{ secrets.ComputeAortaCLVK_TOKEN }}"
+  SCCACHE_REDIS: redis://buildcache01.office.codeplay.com
+  OLD_CA_GITLAB_API_TOKEN: "${{ secrets.OLD_CA_GITLAB_API_TOKEN }}"
+  OLD_CA_GIT_WRITE_TOKEN: "${{ secrets.OLD_CA_GIT_WRITE_TOKEN }}"
+  CLICOLOR_FORCE: '1'
+  GTEST_COLOR: 'yes'
+  CA_GIT_WRITE_TOKEN: "${{ secrets.CA_GIT_WRITE_TOKEN }}"
+  CA_GITLAB_API_TOKEN: "${{ secrets.CA_GITLAB_API_TOKEN }}"
+  LLVM_GIT_WRITE_TOKEN: zrHPYsf6BVupQeYySmnH
+jobs:
+  env-info:
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - run: 'echo "Building: $NIGHTLY_LLVM_PREVIOUS / $NIGHTLY_LLVM_LATEST"'
+    - run: env
+  ca_clean_node:
+    needs: env-info
+    runs-on: ubuntu-latest
+    if: $CA_PIPELINE_TYPE == "cleaner"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - run: CA_MOUNT_LOCATION="/media/nfs/poolfield1"
+    - run: git clone -b v2.1 git@git.office.codeplay.com:tools/artefact-manager.git
+    - run: pip3 install lxml
+    - run: python3 artefact-manager/cleanup_new.py --store-path ${CA_MOUNT_LOCATION}/artefact_store --days-to-keep 7 --keep-newest obviously_invalid_tag --earliest-date "2000-01-01 12:00:00"
+  build-native:
+    needs: env-info
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_LINUX_HOST == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+      BUILD_ID: "${{ github.workflow }}"
+      LLVM_BRANCH: "$NIGHTLY_LLVM_LATEST"
+    strategy:
+      matrix:
+        BUILD_TYPE:
+        - Release
+        - ReleaseAssert
+        LLVM_BRANCH:
+        - "$NIGHTLY_LLVM_PREVIOUS"
+        - "$NIGHTLY_LLVM_LATEST"
+        ARCH:
+        - x86
+        - x86_64
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: echo "Building OCK with build type ${{ matrix.BUILD_TYPE }} on llvm branch ${{ matrix.LLVM_BRANCH }}"
+    - run: python -u scripts/build.py --verbose --build_type ${{ matrix.BUILD_TYPE }} --arch ${{ matrix.ARCH }} --artefact_name ${{ matrix.LLVM_BRANCH }} --generator Ninja --clean --define CA_CL_ENABLE_ICD_LOADER=ON --define OCL_EXTENSION_cl_khr_command_buffer=ON --define OCL_EXTENSION_cl_khr_command_buffer_mutable_dispatch=ON --define OCL_EXTENSION_cl_khr_extended_async_copies=ON --target check-ock -B build
+    - run: python -u scripts/build.py --verbose --build_type ${{ matrix.BUILD_TYPE }} --arch ${{ matrix.ARCH }} --artefact_name ${{ matrix.LLVM_BRANCH }} --generator Ninja --define OCL_EXTENSION_cl_khr_command_buffer=ON --define OCL_EXTENSION_cl_khr_command_buffer_mutable_dispatch=ON --define OCL_EXTENSION_cl_khr_extended_async_copies=ON --push
+#     # 'artifacts.junit' was not transformed because there is no suitable equivalent in GitHub Actions
+  ca_build_test_weird_no_icd:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --clean --define CA_CL_ENABLE_ICD_LOADER=OFF --target check-ock
+  ca_build_test_weird_no_vk:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: rm -rf source/vk doc/source/vk.md
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --enable_api_target cl --clean --target check-ock
+  ca_build_test_weird_no_cl:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: rm -r doc/source/cl/cmake
+    - run: rm -r doc/source/cl/test
+    - run: rm doc/source/cl/*.*
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --enable_api_target vk --clean --target check-ock
+  ca_build_test_weird_cl30_linux:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define CA_ENABLE_HOST_IMAGE_SUPPORT=OFF --clean --target check-ock
+  ca_build_test_weird_cl30_win:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: windows-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/windows:10-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Windows
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock_windows"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type Release --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --compiler vs2019 --define CA_ENABLE_HOST_IMAGE_SUPPORT=OFF --clean --target check-ock
+  ca_build_test_weird_gnu_make:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator 'Unix Makefiles' --clean --target check-ock
+  ca_build_test_weird_no_tests:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja -D CA_ENABLE_TESTS=OFF --clean
+  ca_build_test_weird_host_target_cpu_skylake:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --define CA_HOST_TARGET_CPU=skylake --generator Ninja --clean --target check-ock
+  ca_build_test_weird_no_llvm:
+    needs: build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/storage.py pull artefact.ocl Ubuntu20 x86_64 $NIGHTLY_LLVM_PREVIOUS Release --build_id ${{ github.workflow }} --verbose --clean --path $PWD/archive
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --generator Ninja --offline_only --external_clc $PWD/archive/bin/clc --clean --target check-ock
+  ca_build_test_weird_shared_compiler_no_llvm:
+    needs: build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/storage.py pull artefact.ocl Ubuntu20 x86_64 $NIGHTLY_LLVM_PREVIOUS Release --verbose --clean --path $PWD/archive --build_id ${{ github.workflow }}
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --generator Ninja --offline_only --external_clc $PWD/archive/bin/clc --define CA_COMPILER_ENABLE_DYNAMIC_LOADER=ON --clean --target check-ock
+  ca_build_test_weird_no_kernels:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --disable_offline_kernel_tests --clean --target check-ock
+  ca_build_test_weird_offline_cross_32:
+    needs: build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/storage.py pull artefact.ocl Ubuntu20 x86 $NIGHTLY_LLVM_PREVIOUS Release --verbose --clean --path $PWD/archive --build_id ${{ github.workflow }} --verbose --clean --path $PWD/archive
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch arm --generator Ninja --external_clc $PWD/archive/bin/clc --define CA_ENABLE_HOST_IMAGE_SUPPORT=OFF --offline_only --clean --target check-ock
+  ca_build_test_weird_offline_cross_64:
+    needs: build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/storage.py pull artefact.ocl Ubuntu20 x86_64 $NIGHTLY_LLVM_PREVIOUS Release --verbose --clean --path $PWD/archive --build_id ${{ github.workflow }} --verbose --clean --path $PWD/archive
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch arm64 --generator Ninja --external_clc $PWD/archive/bin/clc --define CA_ENABLE_HOST_IMAGE_SUPPORT=OFF --offline_only --clean --target check-ock
+  ca_build_test_weird_no_offline_kernel_tests:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: windows-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/windows:10-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Windows
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock_windows"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type Release --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --compiler vs2019 --disable_offline_kernel_tests --clean --target check-ock
+  ca_build_test_weird_no_exec-info_linux:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define OCL_EXTENSION_cl_codeplay_kernel_exec_info=OFF --clean --target check-ock
+  ca_build_test_weird_shared_compiler_linux:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define CA_COMPILER_ENABLE_DYNAMIC_LOADER=ON --clean --target check-ock
+  ca_build_test_weird_shared_compiler_windows:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: windows-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/windows:10-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Windows
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock_windows"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define CA_COMPILER_ENABLE_DYNAMIC_LOADER=ON --clean --target check-ock
+  ca_build_test_weird_static_cl_linux:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define CA_CL_TEST_STATIC_LIB=ON --clean --target check-ock --define OCL_EXTENSION_cl_khr_icd=OFF
+  ca_build_test_weird_static_cl_windows:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: windows-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/windows:10-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Windows
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock_windows"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define CA_CL_TEST_STATIC_LIB=ON --clean --target check-ock
+  ca_build_test_weird_llvm_previous_linux_images:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --define CA_ENABLE_HOST_IMAGE_SUPPORT=ON --define "CA_CL_DEVICE_VERSION=OpenCL 3.0 (OpenCL 1.2 images)" --clean --target check-ock
+  ca_build_test_weird_llvm_previous_win_images:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: windows-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/windows:10-x86_64"
+    if: $NIGHTLY_RUN_WEIRD_PIPELINE == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Windows
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run: git submodule update --init --recursive
+    - run:
+        "!reference":
+        - ".clone_ock_windows"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --compiler vs2019 --define CA_ENABLE_HOST_IMAGE_SUPPORT=ON --define "CA_CL_DEVICE_VERSION=OpenCL 3.0 (OpenCL 1.2 images)" --clean --target check-ock
+  ca_build_test_tidy_clang17_no_usm:
+    needs:
+    - ca_clean_node
+    - build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_TIDY == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --compiler clang-17 --artefact_name $NIGHTLY_LLVM_PREVIOUS --generator Ninja --clean --target check-ock-tidy -DCA_ENABLE_HOST_IMAGE_SUPPORT=OFF -DOCL_EXTENSION_cl_intel_unified_shared_memory=OFF
+  ca_build_test_tidy_clang17_offline:
+    needs: build-native
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_LINUX_HOST == "1" && $NIGHTLY_RUN_TIDY == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: python -u scripts/storage.py pull artefact.ocl Ubuntu20 x86_64 $NIGHTLY_LLVM_PREVIOUS Release --build_id ${{ github.workflow }} --verbose --clean --path $PWD/archive
+    - run: python -u scripts/build.py --verbose --build_type ReleaseAssert --arch x86_64 --compiler clang-17 --generator Ninja --offline_only --external_clc $PWD/archive/bin/clc --clean --target check-ock-tidy -DCA_ENABLE_HOST_IMAGE_SUPPORT=OFF
