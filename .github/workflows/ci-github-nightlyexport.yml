@@ -1,0 +1,180 @@
+name: ComputeAorta/ci-github-nightlyexport
+on:
+  push:
+  workflow_dispatch:
+concurrency:
+  group: "${{ github.ref }}"
+  cancel-in-progress: true
+env:
+  STORAGE_USER: "${{ secrets.STORAGE_USER }}"
+  STORAGE_PASS: "${{ secrets.STORAGE_PASS }}"
+  ZULIP_TOKEN: "${{ secrets.ZULIP_TOKEN }}"
+  ComputeAortaCL_TOKEN: "${{ secrets.ComputeAortaCL_TOKEN }}"
+  ComputeAortaCLVK_TOKEN: "${{ secrets.ComputeAortaCLVK_TOKEN }}"
+  SCCACHE_REDIS: redis://buildcache01.office.codeplay.com
+  OLD_CA_GITLAB_API_TOKEN: "${{ secrets.OLD_CA_GITLAB_API_TOKEN }}"
+  OLD_CA_GIT_WRITE_TOKEN: "${{ secrets.OLD_CA_GIT_WRITE_TOKEN }}"
+  CLICOLOR_FORCE: '1'
+  GTEST_COLOR: 'yes'
+  CA_GIT_WRITE_TOKEN: "${{ secrets.CA_GIT_WRITE_TOKEN }}"
+  CA_GITLAB_API_TOKEN: "${{ secrets.CA_GITLAB_API_TOKEN }}"
+  LLVM_GIT_WRITE_TOKEN: zrHPYsf6BVupQeYySmnH
+jobs:
+  env-info:
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - run: 'echo "Building: $NIGHTLY_LLVM_PREVIOUS / $NIGHTLY_LLVM_LATEST"'
+    - run: env
+  build-native:
+    needs: env-info
+    runs-on: ubuntu-latest
+    container:
+      image: "$CI_REGISTRY/computeaorta/ci/ubuntu:20.04-x86_64"
+    if: $NIGHTLY_RUN_LINUX_HOST == "1"
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+      PLATFORM: Ubuntu20
+      BUILD_ID: "${{ github.workflow }}"
+      LLVM_BRANCH: "$NIGHTLY_LLVM_LATEST"
+    strategy:
+      matrix:
+        BUILD_TYPE:
+        - Release
+        - ReleaseAssert
+        LLVM_BRANCH:
+        - "$NIGHTLY_LLVM_PREVIOUS"
+        - "$NIGHTLY_LLVM_LATEST"
+        ARCH:
+        - x86
+        - x86_64
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - run:
+        "!reference":
+        - ".clone_ock"
+        - script
+    - run: echo "Building OCK with build type ${{ matrix.BUILD_TYPE }} on llvm branch ${{ matrix.LLVM_BRANCH }}"
+    - run: python -u scripts/build.py --verbose --build_type ${{ matrix.BUILD_TYPE }} --arch ${{ matrix.ARCH }} --artefact_name ${{ matrix.LLVM_BRANCH }} --generator Ninja --clean --define CA_CL_ENABLE_ICD_LOADER=ON --define OCL_EXTENSION_cl_khr_command_buffer=ON --define OCL_EXTENSION_cl_khr_command_buffer_mutable_dispatch=ON --define OCL_EXTENSION_cl_khr_extended_async_copies=ON --target check-ock -B build
+    - run: python -u scripts/build.py --verbose --build_type ${{ matrix.BUILD_TYPE }} --arch ${{ matrix.ARCH }} --artefact_name ${{ matrix.LLVM_BRANCH }} --generator Ninja --define OCL_EXTENSION_cl_khr_command_buffer=ON --define OCL_EXTENSION_cl_khr_command_buffer_mutable_dispatch=ON --define OCL_EXTENSION_cl_khr_extended_async_copies=ON --push
+#     # 'artifacts.junit' was not transformed because there is no suitable equivalent in GitHub Actions
+  spec:
+    needs: build-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GIT_STRATEGY: clone
+      GIT_DEPTH: '3'
+      NIGHTLY_OCK_BRANCH: main
+      NIGHTLY_GITHUB_USER: codeplaysoftware
+      NIGHTLY_LLVM_LATEST: release_180
+      NIGHTLY_LLVM_PREVIOUS: release_170
+      NIGHTLY_MERGE_TO_STABLE: 'false'
+      NIGHTLY_CA_PIPELINE_TYPE: nightly
+      NIGHTLY_CA_LLVM_BRANCH: develop
+      NIGHTLY_CA_CTS_TYPE_X86: wimpy
+      NIGHTLY_CA_CTS_TYPE_ARM: wimpy
+      NIGHTLY_CA_CTS_TYPE_RISCV: wimpy
+      NIGHTLY_RUN_DOC: '1'
+      NIGHTLY_RUN_BUILD_TEST: '1'
+      NIGHTLY_MR_TARGET_BRANCH: main
+      NIGHTLY_RUN_SYCL_LLVM: '1'
+      NIGHTLY_RUN_SYCL_CTS: '1'
+      NIGHTLY_RUN_WINDOWS_HOST: '1'
+      NIGHTLY_RUN_ARM_CROSS_HOST: '1'
+      NIGHTLY_RUN_RISCV_CROSS_HOST: '1'
+      NIGHTLY_RUN_LINUX_HOST: '1'
+      NIGHTLY_RUN_LINUX_RISCV: '1'
+      NIGHTLY_RUN_WEIRD_PIPELINE: '1'
+      NIGHTLY_RUN_SANITIZERS: '1'
+      NIGHTLY_RUN_TIDY: '1'
+      NIGHTLY_RUN_BUILD_LLVM: '0'
+      NIGHTLY_BUILD_LLVM_BRANCHNAME: main
+      NIGHTLY_BUILD_LLVM_CALLVM_BRANCH: develop
+      NIGHTLY_SEND_ZULIP: '0'
+      NIGHTLY_BUILD_DPCPP_BRANCH: sycl
+      NIGHTLY_RUN_NATIVE_CPU_SYCL_CTS: '1'
+      NIGHTLY_RUN_REMOTE_HAL: '1'
+      NIGHTLY_RUN_TORNADOVM: '1'
+    steps:
+    - uses: actions/checkout@v4.1.0
+      with:
+        fetch-depth: '3'
+        lfs: true
+    - uses: actions/download-artifact@v4.1.0
